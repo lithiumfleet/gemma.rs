@@ -1,3 +1,6 @@
 /target
 .env/
 model/
+.mypy*/
+mypy.ini
+.vscode/

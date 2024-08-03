@@ -1,4 +1,4 @@
-from sentencepiece import SentencePieceProcessor
+from sentencepiece import SentencePieceProcessor # type: ignore
 import struct
 import os
 
