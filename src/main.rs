@@ -1,3 +1,7 @@
+mod tokenizer;
+use tokenizer::Tokenizer;
+
+
 fn main() {
-    println!("Hello, world!");
+    Tokenizer::from_file("./model/tokenizer.bin".as_ref());
 }

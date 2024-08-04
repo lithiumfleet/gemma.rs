@@ -22,14 +22,17 @@ class Tokenizer:
             tokens.append(token)
             scores.append(score)
         print(f"Vocab Size: {self.vocab_size}")
-        print(f"Bos: {self.sp_model.IdToPiece(self.sp_model.bos_id())}")
-        print(f"Eos: {self.sp_model.IdToPiece(self.sp_model.eos_id())}")
-        print(f"Unk: {self.sp_model.IdToPiece(self.sp_model.unk_id())}")
-        print(f"Pad: {self.sp_model.IdToPiece(self.sp_model.pad_id())}")
+        bos_id = self.sp_model.bos_id()
+        eos_id = self.sp_model.eos_id()
+        pad_id = self.sp_model.pad_id()
+        print(f"Bos {bos_id}: {self.sp_model.IdToPiece(bos_id)}")
+        print(f"Eos {eos_id}: {self.sp_model.IdToPiece(eos_id)}")
+        print(f"Pad {pad_id}: {self.sp_model.IdToPiece(pad_id)}")
 
         with open(output_path, "wb") as f:
             f.write("GRTK".encode("utf-8"))
             f.write(struct.pack("I", self.vocab_size))
+            f.write(struct.pack("III", bos_id, eos_id, pad_id))
             for token, score in zip(tokens, scores):
                 f.write(struct.pack("I", len(token)))
                 f.write(token)
