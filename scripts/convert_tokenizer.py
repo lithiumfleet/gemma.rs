@@ -18,7 +18,7 @@ class Tokenizer:
         for i in range(self.vocab_size):
             token = self.sp_model.IdToPiece(i)
             score = self.sp_model.GetScore(i)
-            token = token.encode('utf-8')
+            token = token.replace('_', ' ').encode('utf-8')
             tokens.append(token)
             scores.append(score)
         print(f"Vocab Size: {self.vocab_size}")

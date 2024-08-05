@@ -61,12 +61,13 @@ pub struct Tokenizer {
     pub bos_id:u32,
     pub eos_id:u32,
     pub pad_id:u32,
-    pub words:Vec<Token>
+    pub words:Vec<Token>,
+    pub sorted_words:Vec<Token>
 }
 
 impl Tokenizer {
 
-    pub fn from_file(path:&str) -> Tokenizer {
+    pub fn from_file(path:&str) -> Self {
 
         info!("Tokenizer load from {}", path);
 
@@ -108,10 +109,51 @@ impl Tokenizer {
             bos_id,
             eos_id,
             pad_id,
-            words
+            words,
+            sorted_words: vec![]
         }
 
     }
 
+    pub fn decode(&self, input_ids:&Vec<u32>) -> String {
+        let mut res = vec![];
+        for id in input_ids {
+            let token:Token = self.words[*id as usize].clone();
+            if token.piece.starts_with("<0x") && token.piece.ends_with('>') && token.piece.len() == 6 {
+                if let Ok(bytes) = u8::from_str_radix(&token.piece[3..5], 16) {
+                    res.push(char::from(bytes).to_string());
+                }
+            } else {
+                res.push(token.piece);
+            }
+        }
+        res.join("")
+    }
+
+    pub fn encode(&mut self, input_str:&str) -> Vec<u32> {
+        if self.sorted_words.is_empty() {
+            self.sorted_words = self.words.clone();
+            self.sorted_words.sort_by(|a, b| a.piece.cmp(&b.piece));
+        }
+
+        let mut token_vec:Vec<Token> = vec![];
+        for c in input_str.chars() {
+            let c_str = c.to_string();
+            match self.sorted_words.binary_search_by(|token| token.piece.cmp(&c_str)) {
+                Ok(index) => token_vec.push(self.sorted_words[index].clone()),
+                Err(_) => {
+                    for b in c_str.into_bytes().iter() {
+                        token_vec.push(self.words[*b as usize + 3].clone());
+                    }
+                },
+            }
+        }
+
+        // loop {
+        // BPE from here
+        // }
+        
+        token_vec.iter().map(|t| t.index).collect()
+    }
     
 }
