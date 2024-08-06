@@ -1,7 +1,4 @@
-from contextlib import ExitStack
-from dataclasses import dataclass
 from io import FileIO
-import json
 import os
 from torch import Tensor
 from safetensors.torch import load_file
@@ -18,7 +15,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 DEFAULT_MODEL_PATH = "./model"
-DEFAULT_OUTPUT_PATH = "./model/model.bin"
+DEFAULT_OUTPUT_PATH = "./model/converted/model.bin"
 FORCE_COVER = True
 
 
@@ -30,9 +27,9 @@ def _search_model_safetensors_files(dirpath=DEFAULT_MODEL_PATH) -> list[str]:
             safetensor_files.append(os.path.join(dirpath, filepath))
     return safetensor_files
 
-def _get_layer_index(item:tuple[str,Tensor]) -> float:
+def _get_layer_index(item:tuple[str,Tensor]) -> int:
     if "layer" in item[0]:
-        index = float(item[0].split('.')[2]) / 100
+        index = float(item[0].split('.')[2]) * 100
         # pre/post_attention_norm: RMSnorm
         if   "input_layernorm" in item[0]:
             index += 0
@@ -63,10 +60,10 @@ def _get_layer_index(item:tuple[str,Tensor]) -> float:
 
     else:
         if "embed_tokens" in item[0]:
-            return -1.0
+            return 0
         else:
             assert "norm" in item[0]
-            return 11.0
+            return 2600
 
 
 def sort_model(model:list[tuple[str,Tensor]]):
@@ -89,22 +86,8 @@ def write_to_file(output_fp:FileIO, model:list[tuple[str,Tensor]], max_chunk_siz
 
 
 
-def main():
+def main(debug_check=False):
     logger.info(msg="Start converting model.")
-
-    # check path
-    if os.path.exists(DEFAULT_OUTPUT_PATH):
-        if FORCE_COVER:
-            os.remove(DEFAULT_OUTPUT_PATH)
-            logger.warn(f"{DEFAULT_OUTPUT_PATH} will be overwritten.")
-        else:
-            logger.error(f"A file with same name {DEFAULT_OUTPUT_PATH} in the path.")
-            raise RuntimeError()
-
-    output_fp = open(DEFAULT_OUTPUT_PATH, "wb", buffering=0)
-
-    head_str = "GRMD google/gemma-2-2b-it"
-    output_fp.write(struct.pack(f"I{len(head_str)}s", len(head_str), head_str.encode('utf-8')))
 
     model:list[tuple[str,Tensor]] = []   
     for path in _search_model_safetensors_files():
@@ -112,16 +95,36 @@ def main():
         for name,tensor in part.items():
             model.append((name, tensor))
 
-
     sort_model(model)
 
-    write_to_file(output_fp, model)
+    if debug_check:
+        for name, _ in model:
+            print(name)
 
-    output_fp.close()
+    else:
+
+        # check path
+        if os.path.exists(DEFAULT_OUTPUT_PATH):
+            if FORCE_COVER:
+                os.remove(DEFAULT_OUTPUT_PATH)
+                logger.warn(f"{DEFAULT_OUTPUT_PATH} will be overwritten.")
+            else:
+                logger.error(f"A file with same name {DEFAULT_OUTPUT_PATH} in the path.")
+                raise RuntimeError()
+
+        output_fp = open(DEFAULT_OUTPUT_PATH, "wb", buffering=0)
+
+        head_str = "GRMD google/gemma-2-2b-it"
+        output_fp.write(struct.pack(f"I{len(head_str)}s", len(head_str), head_str.encode('utf-8')))
+
+
+        write_to_file(output_fp, model)
+
+        output_fp.close()
 
     logger.info("Finish converting model.")
     
 
 
 if __name__ == "__main__":
-    main()
+    main(True)

@@ -151,7 +151,7 @@ impl Tokenizer {
             self.sorted_words.sort_by(|a, b| a.piece.cmp(&b.piece));
         }
 
-        // this is u+226 and u+95： "▁" "_"
+        // this is u+226 and u+95: "▁" "_"
         let converted_input = input_str.to_string().replace(" ", "▁");
         let mut token_vec:Vec<Token> = vec![];
         for c in converted_input.chars() {

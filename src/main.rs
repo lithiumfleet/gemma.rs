@@ -1,6 +1,7 @@
 use env_logger;
 use log::LevelFilter;
 mod tokenizer;
+mod model;
 use tokenizer::Tokenizer;
 
 
@@ -8,7 +9,7 @@ fn main() {
     env_logger::builder()
         .filter_level(LevelFilter::Debug)
         .init();
-    let mut tokenizer = Tokenizer::from_file("./model/tokenizer.bin");
+    let mut tokenizer = Tokenizer::from_file("./model/converted/tokenizer.bin");
     // let tokens = vec![106, 1645, 108, 107, 108, 106, 2516, 108];
     // println!("{}", tokenizer.decode(&tokens));
 

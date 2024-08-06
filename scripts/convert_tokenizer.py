@@ -4,7 +4,7 @@ import struct
 import os
 
 DEFAULT_TOKENIZER_PATH = "./model/tokenizer.model"
-DEFAULT_OUTPUT_PATH = "./model/tokenizer.bin"
+DEFAULT_OUTPUT_PATH = "./model/converted/tokenizer.bin"
 
 class Tokenizer:
     def __init__(self, tokenizer_path):

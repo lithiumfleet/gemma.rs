@@ -14,5 +14,5 @@ This project aimming to run gemma using rust, which can provide high performance
 
 ## TODO
 
-+ [ ] tokenizer
++ [x] tokenizer
 + [ ] model
