@@ -1,7 +1,7 @@
 use env_logger;
 use log::LevelFilter;
 mod tokenizer;
-mod model;
+mod nn;
 use tokenizer::Tokenizer;
 
 

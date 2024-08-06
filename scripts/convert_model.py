@@ -29,7 +29,7 @@ def _search_model_safetensors_files(dirpath=DEFAULT_MODEL_PATH) -> list[str]:
 
 def _get_layer_index(item:tuple[str,Tensor]) -> int:
     if "layer" in item[0]:
-        index = float(item[0].split('.')[2]) * 100
+        index = int(item[0].split('.')[2]) * 100
         # pre/post_attention_norm: RMSnorm
         if   "input_layernorm" in item[0]:
             index += 0
@@ -127,4 +127,4 @@ def main(debug_check=False):
 
 
 if __name__ == "__main__":
-    main(True)
+    main(debug_check=True)
