@@ -1,3 +1,4 @@
+import token
 from sentencepiece import SentencePieceProcessor # type: ignore
 import struct
 import os
@@ -18,7 +19,7 @@ class Tokenizer:
         for i in range(self.vocab_size):
             token = self.sp_model.IdToPiece(i)
             score = self.sp_model.GetScore(i)
-            token = token.replace('_', ' ').encode('utf-8')
+            token = token.encode('utf-8')
             tokens.append(token)
             scores.append(score)
         print(f"Vocab Size: {self.vocab_size}")
@@ -44,4 +45,10 @@ class Tokenizer:
 if __name__ == "__main__":
     print("This is tokenizer convertor script.")
     tokenizer = Tokenizer(DEFAULT_TOKENIZER_PATH)
+    # corpus = "Another benefit is that if let allows us to match non-parameterized enum variants. This is true even in cases where the enum doesn't implement or derive PartialEq. In such cases if Foo::Bar == a would fail to compile, because instances of the enum cannot be equated, however if let will continue to work."
+    corpus = "hello world!"
+    input_ids = tokenizer.sp_model.EncodeAsIds(corpus)
+    recover = "|".join([tokenizer.sp_model.DecodeIds(input_id) for input_id in input_ids])
+    print(f"{corpus} -> {input_ids} -> {recover}")
+
     tokenizer.convert(DEFAULT_OUTPUT_PATH)

@@ -55,6 +55,17 @@ pub struct Token {
     pub score:f32
 }
 
+impl Token {
+    pub fn new_default() -> Token {
+        Token {
+            index: u32::MAX,
+            piece: String::new(),
+            score: -1e10
+        }
+    }
+    
+}
+
 
 pub struct Tokenizer {
     pub n_words:u32,
@@ -115,6 +126,10 @@ impl Tokenizer {
 
     }
 
+    pub fn decode_id(&self, input_id:u32) -> String {
+        self.words[input_id as usize].piece.clone()
+    }
+
     pub fn decode(&self, input_ids:&Vec<u32>) -> String {
         let mut res = vec![];
         for id in input_ids {
@@ -124,7 +139,7 @@ impl Tokenizer {
                     res.push(char::from(bytes).to_string());
                 }
             } else {
-                res.push(token.piece);
+                res.push(token.piece.replace("▁", " "));
             }
         }
         res.join("")
@@ -136,8 +151,10 @@ impl Tokenizer {
             self.sorted_words.sort_by(|a, b| a.piece.cmp(&b.piece));
         }
 
+        // this is u+226 and u+95： "▁" "_"
+        let converted_input = input_str.to_string().replace(" ", "▁");
         let mut token_vec:Vec<Token> = vec![];
-        for c in input_str.chars() {
+        for c in converted_input.chars() {
             let c_str = c.to_string();
             match self.sorted_words.binary_search_by(|token| token.piece.cmp(&c_str)) {
                 Ok(index) => token_vec.push(self.sorted_words[index].clone()),
@@ -149,9 +166,28 @@ impl Tokenizer {
             }
         }
 
-        // loop {
-        // BPE from here
-        // }
+        loop {
+            let mut best_token = Token::new_default();
+            let mut replace_pos:usize = usize::MAX;
+            for i in 0..token_vec.len()-1 {
+                let merged_str:String = format!("{}{}", self.decode_id(token_vec[i].index), self.decode_id(token_vec[i+1].index));
+                if let Ok(index) = self.sorted_words.binary_search_by(|t| t.piece.cmp(&merged_str)) {
+                    let merged_token = &self.sorted_words[index];
+                    debug!("{} -> {} (cur best{})", merged_token.piece, merged_token.score, best_token.score);
+                    if merged_token.score > best_token.score {
+                        best_token = merged_token.clone();
+                        replace_pos = i;
+                    }
+                }
+            }
+
+            if best_token.index == u32::MAX {
+                break;
+            }
+
+            token_vec[replace_pos] = best_token;
+            token_vec.remove(replace_pos+1);
+        }
         
         token_vec.iter().map(|t| t.index).collect()
     }
