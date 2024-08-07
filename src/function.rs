@@ -1,8 +1,10 @@
+use std::f32::consts::PI;
+
 
 pub struct Matrix {
-    data: Vec<f32>,
-    n_row: usize,
-    n_col: usize
+    pub data: Vec<f32>,
+    pub n_row: usize,
+    pub n_col: usize
 }
 
 impl Matrix {
@@ -43,10 +45,12 @@ impl Matrix {
 
 }
 
-pub fn matmul(output:&mut Matrix, a:&Matrix, b:&Matrix) {
-    assert!(output.n_row == a.n_row && output.n_col == b.n_col, 
-        "Can not matmul {}*{} with {}*{} and save into {}*{}", 
-        a.n_row, a.n_col, b.n_row, b.n_col, output.n_row, output.n_col);
+pub fn matmul(a:&Matrix, b:&Matrix) -> Matrix {
+    assert!(a.n_col == b.n_row, 
+        "Can not matmul {}*{} with {}*{}", a.n_row, a.n_col, b.n_row, b.n_col);
+
+    let mut output = Matrix::new_empty(a.n_row, b.n_col);
+
     for i in 0..a.n_row {
         for j in 0..b.n_col {
             let mut temp_sum = 0.0;
@@ -56,7 +60,21 @@ pub fn matmul(output:&mut Matrix, a:&Matrix, b:&Matrix) {
             output.set(i, j, temp_sum);
         }
     }
+
+    output
 }
+
+pub fn gelu(x:&mut Matrix) {
+    for r in 0..x.n_row {
+        for c in 0..x.n_col {
+            let i = x.get(r, c);
+            let val = 0.5*i*(1.0+f32::tanh((2.0/PI).sqrt()*(i+0.044715*i.powi(3))));
+            x.set(r, c, val);
+        }
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -65,8 +83,7 @@ mod tests {
     fn test_matmul() {
         let  a  = Matrix::new(vec![1.0,2.0,3.0,4.0,5.0,6.0], 3, 2);
         let  b  = Matrix::new(vec![1.0,-1.0,0.0,2.0], 2, 2);
-        let mut output = Matrix::new_empty(3, 2);
-        matmul(&mut output, &a, &b);
+        let output = matmul(&a, &b);
         assert_eq!(output.get(2, 0), 5.0);
     }
     #[test]
