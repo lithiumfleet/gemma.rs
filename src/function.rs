@@ -16,6 +16,7 @@ impl Matrix {
             n_col,
         }
     }
+
     pub fn new_empty(n_row: usize, n_col: usize) -> Self {
         Matrix {
             data: vec![0.0; n_col*n_row],
@@ -23,6 +24,7 @@ impl Matrix {
             n_col,
         }
     }
+
     pub fn transpose(&mut self) {
         let mut new_data:Vec<f32> = vec![0.0; self.data.len()];
         for r in 0..self.n_row {
@@ -36,11 +38,32 @@ impl Matrix {
         self.n_col = self.n_row;
         self.n_row = _temp;
     }
+
     pub fn get(&self, r:usize, c:usize) -> f32 {
         self.data[r*self.n_col+c]
     }
+
     pub fn set(&mut self, r:usize, c:usize, val:f32) {
         self.data[r*self.n_col+c] = val;
+    }
+
+    pub fn concat(&mut self, other:Matrix, axis:usize) {
+        assert!(axis == 0 || axis == 1);
+        if axis == 0 {
+            assert!(other.n_col == self.n_col);
+            self.data.extend(other.data);
+            self.n_row += other.n_row;
+        } else {
+            assert!(other.n_row == self.n_row);
+            self.data.extend(other.data);
+            self.n_col += other.n_col;
+        }
+    }
+
+    pub fn scale_by(&mut self, scaler:f32) {
+        for i in self.data.iter_mut() {
+            *i *= scaler;
+        }
     }
 
 }
@@ -91,5 +114,6 @@ mod tests {
         let mut a = Matrix::new(vec![1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0], 3, 3);
         a.transpose();
         assert_eq!(a.get(2, 1), 6.0);
+        assert_eq!(a.get(1, 2), 8.0);
     }
 }

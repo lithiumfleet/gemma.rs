@@ -1,10 +1,9 @@
 
 #[path = "./function.rs"]
 mod function;
-use core::num;
-use std::io::SeekFrom;
 
 use function::*;
+use serde_json::to_vec;
 
 struct Linear {
     weight_t: Matrix,
@@ -120,13 +119,144 @@ impl RMSNorm {
             }
         }
     }
-    pub fn forward(self, x:&mut Matrix) -> Matrix {
+    pub fn forward(&self, x:&mut Matrix) -> Matrix {
         self._norm(x);
         matmul(x, &self.weight)
     }
 }
 
 
+struct GemmaAttention { // this is GQA
+    num_heads:usize,
+    num_kv_heads:usize,
+    num_queries_per_kv:usize,           
+    hidden_size:usize,
+    head_dim:usize,
+    q_size:usize,
+    kv_size:usize,
+    scaling:f32,
+    q_proj:Linear,
+    k_proj:Linear,
+    v_proj:Linear,
+    o_proj:Linear,
+    attn_logit_softcapping:f32
+}
+
+impl GemmaAttention {
+    pub fn new(
+        weight_data:Vec<f32>,
+        num_heads:usize,
+        num_kv_heads:usize,
+        head_dim:usize,
+        query_pre_attn_scalar:usize,
+        hidden_size:usize,
+        attn_logit_softcapping:f32
+    ) -> GemmaAttention {
+        assert!(num_heads % num_kv_heads == 0);
+        let num_queries_per_kv = num_heads / num_kv_heads;
+
+        let q_size = num_heads * head_dim;
+        let kv_size = num_kv_heads * head_dim;
+
+        let scaling:f32 = 1.0 / (query_pre_attn_scalar as f32).sqrt();
+
+        let mut cursor:usize = 0;
+        let q_weight = weight_data[0..hidden_size*q_size].to_vec();
+        cursor += q_weight.len();
+        let k_weight = weight_data[cursor..cursor+hidden_size*kv_size].to_vec();
+        cursor += k_weight.len();
+        let v_weight = weight_data[cursor..cursor+hidden_size*kv_size].to_vec();
+        cursor += v_weight.len();
+        let o_weight = weight_data[cursor..cursor+hidden_size*q_size].to_vec();
+        cursor += o_weight.len();
+        assert!(cursor == weight_data.len());
+
+        let q_proj = Linear::new(q_weight, hidden_size, q_size);
+        let k_proj = Linear::new(k_weight, hidden_size, kv_size);
+        let v_proj = Linear::new(v_weight, hidden_size, kv_size);
+        let o_proj = Linear::new(o_weight, q_size, hidden_size);
+
+        GemmaAttention {
+            num_heads,
+            num_kv_heads,
+            num_queries_per_kv,           
+            hidden_size,
+            head_dim,
+            q_size,
+            kv_size,
+            scaling,
+            q_proj,
+            k_proj,
+            v_proj,
+            o_proj,
+            attn_logit_softcapping
+        }
+    }
+
+    fn _get_chunked_q(xq:Matrix, head_dim:usize) -> Vec<Matrix> {
+        assert!(xq.n_row == 1 && xq.n_col % head_dim == 0);
+        let mut chunked_q:Vec<Matrix> = vec![];
+        for i in 0..xq.data.len() {
+            chunked_q.push(
+                Matrix::new(xq.data[i*head_dim..(i+1)*head_dim].to_vec(), 1, head_dim)
+            );
+        }
+        chunked_q
+    }
+
+    fn _repeat_k(ori_k:&Matrix, times:usize) -> Matrix {
+        let mut k = Matrix::new(ori_k.data.clone(), ori_k.n_row, ori_k.n_col);
+        for _ in 1..times {
+            let _k = Matrix::new(ori_k.data.clone(), ori_k.n_row, ori_k.n_col);
+            k.concat(_k, 0);
+        }
+        k
+    }
+
+    pub fn forward(&self, 
+        new_input: &Matrix,
+        k_cache: &mut Vec<Matrix>,
+        v_cache: &mut Vec<Matrix>
+    ) -> Matrix {
+
+        // new_input [1, hidden_size]
+
+        let mut xq = self.q_proj.forward(new_input); // [1, q_size]
+        xq.scale_by(self.scaling);
+        let mut xk = self.k_proj.forward(new_input); 
+        xk.transpose();                          // [kv_size, 1]
+        let xv = self.v_proj.forward(new_input); // [1, kv_size]
+
+        // TODO: add rope
+
+        // add kv cache
+        let chunked_q = Self::_get_chunked_q(xq, self.head_dim); // [1, head_dim] * num_heads
+        k_cache.push(xk); // [kv_size, seq_len] * num_heads
+        v_cache.push(xv); // [seq_len, kv_size] * num_heads
+
+
+        // attention
+        let mut output = Matrix::new_empty(1, 0); // [1, hidden_size]
+        for i in 0..self.num_heads {
+            // current head
+            let q = &chunked_q[i]; // q: [1, head_dim]
+            let k = Self::_repeat_k(&k_cache[i], self.num_queries_per_kv); // [head_dim, seq_len]
+
+            let score = matmul(&q, &k); // [1, seq_len]
+            // TODO: score softmax
+
+            let v = &v_cache[i]; // [seq_len, kv_size]
+            let head_output = matmul(&score, &v);
+            output.concat(head_output, 1);
+        }
+        assert!(output.n_col == self.hidden_size);
+        output 
+
+        // output [1, hidden_size]
+    }
+
+
+}
 
 
 
