@@ -66,6 +66,20 @@ impl Matrix {
         }
     }
 
+    pub fn softmax(&mut self) {
+        let max_val = self.data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum_exp = 0.0;
+        
+        for val in &mut self.data {
+            *val = (*val - max_val).exp();
+            sum_exp += *val;
+        }
+
+        for val in &mut self.data {
+            *val /= sum_exp;
+        }
+    }
+
 }
 
 pub fn matmul(a:&Matrix, b:&Matrix) -> Matrix {

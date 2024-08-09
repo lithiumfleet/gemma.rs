@@ -204,7 +204,7 @@ impl GemmaAttention {
         chunked_q
     }
 
-    fn _repeat_k(ori_k:&Matrix, times:usize) -> Matrix {
+    fn _get_repeated_k(ori_k:&Matrix, times:usize) -> Matrix {
         let mut k = Matrix::new(ori_k.data.clone(), ori_k.n_row, ori_k.n_col);
         for _ in 1..times {
             let _k = Matrix::new(ori_k.data.clone(), ori_k.n_row, ori_k.n_col);
@@ -212,9 +212,31 @@ impl GemmaAttention {
         }
         k
     }
+    
+    fn _apply_rope(x: &mut Matrix, pos: usize, num_heads:usize, head_dim: usize) {
+        assert!(x.n_row == 1 && x.n_col == num_heads*head_dim);
+
+        for i in 0..num_heads {
+            let head_offset = i*head_dim;
+
+            for j in 0..head_dim/2 {
+                let theta = (pos as f32) / (10000.0_f32.powf(2.0 * j as f32 / head_dim as f32));
+                let cos_theta = theta.cos();
+                let sin_theta = theta.sin();
+
+                let x0 = x.data[2*j+head_offset];
+                let x1 = x.data[2*j+1+head_offset];
+
+                x.data[2*j+head_offset] = cos_theta*x0 - sin_theta*x1;
+                x.data[2*j+1+head_offset] = sin_theta*x0 + cos_theta*x1;
+            }
+        }
+    }
+
 
     pub fn forward(&self, 
         new_input: &Matrix,
+        position: usize,
         k_cache: &mut Vec<Matrix>,
         v_cache: &mut Vec<Matrix>
     ) -> Matrix {
@@ -222,12 +244,15 @@ impl GemmaAttention {
         // new_input [1, hidden_size]
 
         let mut xq = self.q_proj.forward(new_input); // [1, q_size]
-        xq.scale_by(self.scaling);
-        let mut xk = self.k_proj.forward(new_input); 
-        xk.transpose();                          // [kv_size, 1]
+        let mut xk = self.k_proj.forward(new_input); // [1, kv_size]
         let xv = self.v_proj.forward(new_input); // [1, kv_size]
 
-        // TODO: add rope
+        // add rope
+        Self::_apply_rope(&mut xq, position, self.num_heads, self.head_dim);
+        Self::_apply_rope(&mut xk, position, self.num_kv_heads, self.kv_size);
+
+        xk.transpose(); // [kv_size, 1]
+        xq.scale_by(self.scaling);
 
         // add kv cache
         let chunked_q = Self::_get_chunked_q(xq, self.head_dim); // [1, head_dim] * num_heads
@@ -240,10 +265,11 @@ impl GemmaAttention {
         for i in 0..self.num_heads {
             // current head
             let q = &chunked_q[i]; // q: [1, head_dim]
-            let k = Self::_repeat_k(&k_cache[i], self.num_queries_per_kv); // [head_dim, seq_len]
+            let k = Self::_get_repeated_k(&k_cache[i], self.num_queries_per_kv); // [head_dim, seq_len]
 
-            let score = matmul(&q, &k); // [1, seq_len]
-            // TODO: score softmax
+            let mut score = matmul(&q, &k); // [1, seq_len]
+            // score softmax
+            score.softmax();
 
             let v = &v_cache[i]; // [seq_len, kv_size]
             let head_output = matmul(&score, &v);
