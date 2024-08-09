@@ -80,6 +80,9 @@ impl Matrix {
         }
     }
 
+    pub fn tanh(&mut self) {
+        self.data.iter_mut().for_each(|x| *x = x.tanh());
+    }
 }
 
 pub fn matmul(a:&Matrix, b:&Matrix) -> Matrix {

@@ -8,7 +8,7 @@ use serde_json::to_vec;
 struct Linear {
     weight_t: Matrix,
     in_features: usize,
-    out_features: usize
+    out_features: usize,
 }
 
 impl Linear {
@@ -57,7 +57,7 @@ impl GemmaMLP {
         let outputs = self.down_proj.forward(&fuse);
         outputs
     }
-    
+
 }
 
 struct Embedding {
@@ -85,7 +85,7 @@ impl Embedding {
         }
         Matrix::new(output, input_ids.len(), self.embedding_dim)
     }
-    
+
 }
 
 struct RMSNorm {
@@ -203,7 +203,6 @@ impl GemmaAttention {
         }
         chunked_q
     }
-
     fn _repeat_xk(xk:&mut Matrix, times:usize) {
         assert!(xk.n_row == 1);
         // ori_k [1, kv_size]
@@ -212,28 +211,27 @@ impl GemmaAttention {
             xk.concat(_k, 0);
         }
     }
-    
     fn _apply_rope(x: &mut Matrix, pos: usize, num_heads:usize, head_dim: usize) {
         assert!(x.n_row == 1 && x.n_col == num_heads*head_dim);
 
         for i in 0..num_heads {
-            let head_offset = i*head_dim;
+            let dim_base_offset = i*head_dim;
 
             for j in 0..head_dim/2 {
                 let theta = (pos as f32) / (10000.0_f32.powf(2.0 * j as f32 / head_dim as f32));
                 let cos_theta = theta.cos();
                 let sin_theta = theta.sin();
 
-                let x0 = x.data[2*j+head_offset];
-                let x1 = x.data[2*j+1+head_offset];
+                let x0 = x.data[2*j+dim_base_offset];
+                let x1 = x.data[2*j+1+dim_base_offset];
 
-                x.data[2*j+head_offset] = cos_theta*x0 - sin_theta*x1;
-                x.data[2*j+1+head_offset] = sin_theta*x0 + cos_theta*x1;
+                x.data[2*j+dim_base_offset] = cos_theta*x0 - sin_theta*x1;
+                x.data[2*j+1+dim_base_offset] = sin_theta*x0 + cos_theta*x1;
             }
         }
     }
-
     fn _add_to_k_cache(&self, k_cache: &mut Vec<Matrix>, xk:Matrix) {
+        // FIXME: if k_cache is none?
         // k_cache: [head_dim, seq_len] * num_kv_heads
         // xk: [1, kv_size] kv_size = num_kv_heads * head_dim
         for i in 0..self.num_kv_heads {
@@ -243,6 +241,7 @@ impl GemmaAttention {
         }
     }
     fn _add_to_v_cache(&self, v_cache: &mut Vec<Matrix>, xv:Matrix) {
+        // FIXME: if v_cache is none?
         // v_cache: [seq_len, head_dim] * num_kv_heads
         // xv: [1, kv_size] kv_size = num_kv_heads * head_dim
         for i in 0..self.num_kv_heads {
@@ -276,9 +275,10 @@ impl GemmaAttention {
         // v_cache: [seq_len, head_dim] * num_kv_heads
         self._add_to_v_cache(v_cache, xv);
 
+        xq.scale_by(self.scaling);
         let chunked_xq = Self::_chunked_xq_by_heads(xq, self.head_dim);
         // attention
-        let mut output = Matrix::new_empty(1, 0); // output will be in shape: [1, hidden_size]
+        let mut output = Matrix::new_empty(1, 0); // output will be in shape: [1, q_size]
         for i in 0..self.num_heads {
             // current head
             let q = &chunked_xq[i]; // q: [1, head_dim]
@@ -289,6 +289,11 @@ impl GemmaAttention {
             // score
             let mut score = matmul(&q, &k); // [1, seq_len]
 
+            // soft capping
+            score.scale_by(1.0/self.attn_logit_softcapping);
+            score.tanh();
+            score.scale_by(self.attn_logit_softcapping);
+
             // score softmax
             score.softmax();
             
@@ -296,10 +301,9 @@ impl GemmaAttention {
             output.concat(head_output, 1);
         }
 
-        assert!(output.n_col == self.hidden_size);
-        output 
+        assert!(output.n_col == self.q_size); // output [1, q_size]
 
-        // output [1, hidden_size]
+        self.o_proj.forward(&output) // [1, hidden_size]
     }
 
 
@@ -317,4 +321,79 @@ mod tests {
         let output = l.forward(&input);
         assert_eq!(output.get(300, 4), 9.42);
     }
+}
+
+struct GemmaDecoderLayer {
+    input_layernorm: RMSNorm,
+    self_attn: GemmaAttention,
+    post_attention_layernorm: RMSNorm,
+    pre_feedforward_layernorm: RMSNorm,
+    mlp: GemmaMLP,
+    post_feedforward_layernorm: RMSNorm,
+    k_cache: Vec<Matrix>,
+    v_cache: Vec<Matrix>
+}
+
+impl GemmaDecoderLayer {
+    fn _get_next_chunk(weight_data: &Vec<f32>, cursor:&mut usize, step:usize) -> Vec<f32> {
+        let res = weight_data[*cursor..*cursor+step].to_vec();
+        *cursor += step;
+        res
+    }
+    pub fn new(
+        weight_data: Vec<f32>
+    ) -> GemmaDecoderLayer {
+        let mut cursor = 0;
+
+        let input_layernorm_weight_data = Self::_get_next_chunk(&weight_data, &mut cursor, 2304);
+        let input_layernorm = RMSNorm::new(
+            input_layernorm_weight_data,
+            2304 // dim = hidden_size
+        );
+        let self_attn_weight_data = Self::_get_next_chunk(&weight_data, &mut cursor, 14155776); // 2*hidden_size*(q_size+kv_size) = 2*2304*(8*256+4*256)
+        let self_attn = GemmaAttention::new(
+            self_attn_weight_data,
+            8, // num_heads
+            4, // num_kv_heads
+            256, // head_dim
+            256, // query_pre_attn_scalar
+            2304, // hidden_size
+            50.0 // attn_logit_softcapping
+        );
+        let post_attention_layernorm_weight_data = Self::_get_next_chunk(&weight_data, &mut cursor, 2304);
+        let post_attention_layernorm = RMSNorm::new(
+            post_attention_layernorm_weight_data,
+            2304 // dim = hidden_size
+        );
+        let pre_feedforward_layernorm_weight_data = Self::_get_next_chunk(&weight_data, &mut cursor, 2304);
+        let pre_feedforward_layernorm = RMSNorm::new(
+            pre_feedforward_layernorm_weight_data,
+            2304 // dim = hidden_size
+        );
+        let mlp_weight_data = Self::_get_next_chunk(&weight_data, &mut cursor, 63700992); // 3*hidden_size*intermediate_size = 3*2304*9216
+        let mlp = GemmaMLP::new(
+            mlp_weight_data,
+            2304, // hidden_size,
+            9216 // intermediate_size
+        );
+        let post_feedforward_layernorm_weight_data = Self::_get_next_chunk(&weight_data, &mut cursor, 2304);
+        let post_feedforward_layernorm = RMSNorm::new(
+            post_feedforward_layernorm_weight_data,
+            2304 // dim = hidden_size
+        );
+
+        let k_cache:Vec<Matrix> = vec![];
+        let v_cache:Vec<Matrix> = vec![];
+        GemmaDecoderLayer {
+            input_layernorm,
+            self_attn,
+            post_attention_layernorm,
+            pre_feedforward_layernorm,
+            mlp,
+            post_feedforward_layernorm,
+            k_cache,
+            v_cache
+        }
+    }
+
 }
