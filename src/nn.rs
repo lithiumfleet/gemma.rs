@@ -126,10 +126,10 @@ impl RMSNorm {
 }
 
 
-struct GemmaAttention { // this is GQA
+struct GemmaAttention {
     num_heads:usize,
     num_kv_heads:usize,
-    num_queries_per_kv:usize,           
+    num_queries_per_kv:usize,
     hidden_size:usize,
     head_dim:usize,
     q_size:usize,
@@ -193,7 +193,7 @@ impl GemmaAttention {
         }
     }
 
-    fn _get_chunked_q(xq:Matrix, head_dim:usize) -> Vec<Matrix> {
+    fn _chunked_xq_by_heads(xq:Matrix, head_dim:usize) -> Vec<Matrix> {
         assert!(xq.n_row == 1 && xq.n_col % head_dim == 0);
         let mut chunked_q:Vec<Matrix> = vec![];
         for i in 0..xq.data.len() {
@@ -204,13 +204,13 @@ impl GemmaAttention {
         chunked_q
     }
 
-    fn _get_repeated_k(ori_k:&Matrix, times:usize) -> Matrix {
-        let mut k = Matrix::new(ori_k.data.clone(), ori_k.n_row, ori_k.n_col);
+    fn _repeat_xk(xk:&mut Matrix, times:usize) {
+        assert!(xk.n_row == 1);
+        // ori_k [1, kv_size]
         for _ in 1..times {
-            let _k = Matrix::new(ori_k.data.clone(), ori_k.n_row, ori_k.n_col);
-            k.concat(_k, 0);
+            let _k = Matrix::new(xk.data.clone(), 1, xk.n_col);
+            xk.concat(_k, 0);
         }
-        k
     }
     
     fn _apply_rope(x: &mut Matrix, pos: usize, num_heads:usize, head_dim: usize) {
@@ -233,6 +233,25 @@ impl GemmaAttention {
         }
     }
 
+    fn _add_to_k_cache(&self, k_cache: &mut Vec<Matrix>, xk:Matrix) {
+        // k_cache: [head_dim, seq_len] * num_kv_heads
+        // xk: [1, kv_size] kv_size = num_kv_heads * head_dim
+        for i in 0..self.num_kv_heads {
+            let range = i*self.head_dim..(i+1)*self.head_dim;
+            let head_xk = Matrix::new(xk.data[range].to_vec(), self.head_dim, 1);
+            k_cache[i].concat(head_xk, 1);
+        }
+    }
+    fn _add_to_v_cache(&self, v_cache: &mut Vec<Matrix>, xv:Matrix) {
+        // v_cache: [seq_len, head_dim] * num_kv_heads
+        // xv: [1, kv_size] kv_size = num_kv_heads * head_dim
+        for i in 0..self.num_kv_heads {
+            let range = i*self.head_dim..(i+1)*self.head_dim;
+            let head_xv = Matrix::new(xv.data[range].to_vec(), self.head_dim, 1);
+            v_cache[i].concat(head_xv, 0);
+        }
+    }
+
 
     pub fn forward(&self, 
         new_input: &Matrix,
@@ -249,32 +268,34 @@ impl GemmaAttention {
 
         // add rope
         Self::_apply_rope(&mut xq, position, self.num_heads, self.head_dim);
-        Self::_apply_rope(&mut xk, position, self.num_kv_heads, self.kv_size);
+        Self::_apply_rope(&mut xk, position, self.num_kv_heads, self.head_dim);
 
-        xk.transpose(); // [kv_size, 1]
-        xq.scale_by(self.scaling);
+        // add kvcache
+        // k_cache: [head_dim, seq_len] * num_kv_heads
+        self._add_to_k_cache(k_cache, xk);
+        // v_cache: [seq_len, head_dim] * num_kv_heads
+        self._add_to_v_cache(v_cache, xv);
 
-        // add kv cache
-        let chunked_q = Self::_get_chunked_q(xq, self.head_dim); // [1, head_dim] * num_heads
-        k_cache.push(xk); // [kv_size, seq_len] * num_heads
-        v_cache.push(xv); // [seq_len, kv_size] * num_heads
-
-
+        let chunked_xq = Self::_chunked_xq_by_heads(xq, self.head_dim);
         // attention
-        let mut output = Matrix::new_empty(1, 0); // [1, hidden_size]
+        let mut output = Matrix::new_empty(1, 0); // output will be in shape: [1, hidden_size]
         for i in 0..self.num_heads {
             // current head
-            let q = &chunked_q[i]; // q: [1, head_dim]
-            let k = Self::_get_repeated_k(&k_cache[i], self.num_queries_per_kv); // [head_dim, seq_len]
+            let q = &chunked_xq[i]; // q: [1, head_dim]
+            let _i = i / self.num_queries_per_kv; // share heads with multiple q
+            let k = &k_cache[_i]; // k: [head_dim, seq_len]
+            let v = &v_cache[_i]; // v: [seq_len, head_dim]
 
+            // score
             let mut score = matmul(&q, &k); // [1, seq_len]
+
             // score softmax
             score.softmax();
-
-            let v = &v_cache[i]; // [seq_len, kv_size]
+            
             let head_output = matmul(&score, &v);
             output.concat(head_output, 1);
         }
+
         assert!(output.n_col == self.hidden_size);
         output 
 
