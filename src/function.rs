@@ -83,6 +83,17 @@ impl Matrix {
     pub fn tanh(&mut self) {
         self.data.iter_mut().for_each(|x| *x = x.tanh());
     }
+
+    pub fn add(&mut self, other:&Matrix) {
+        assert!(self.n_row == other.n_row && self.n_col == other.n_col);
+        for i in 0..self.data.len() {
+            self.data[i] += other.data[i];
+        }
+    }
+
+    pub fn clone(&self) -> Matrix {
+        Matrix::new(self.data.clone(), self.n_row, self.n_col)
+    }
 }
 
 pub fn matmul(a:&Matrix, b:&Matrix) -> Matrix {

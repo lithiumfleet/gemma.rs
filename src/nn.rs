@@ -1,9 +1,6 @@
-
 #[path = "./function.rs"]
 mod function;
-
 use function::*;
-use serde_json::to_vec;
 
 struct Linear {
     weight_t: Matrix,
@@ -30,6 +27,7 @@ impl Linear {
     }
 }
 
+
 struct GemmaMLP {
     gate_proj: Linear,
     up_proj: Linear,
@@ -49,9 +47,9 @@ impl GemmaMLP {
         }
     }
 
-    pub fn forward(self, x:&Matrix) -> Matrix {
+    pub fn forward(&self, x:&Matrix) -> Matrix {
         let mut gate = self.gate_proj.forward(x);
-        gelu(&mut gate);
+        gelu(&mut gate); // F.gelu(gate, approximate="tanh")
         let up = self.up_proj.forward(x);
         let fuse = matmul(&gate, &up);
         let outputs = self.down_proj.forward(&fuse);
@@ -60,12 +58,12 @@ impl GemmaMLP {
 
 }
 
+
 struct Embedding {
     weight: Matrix,
     num_embeddings: usize,
     embedding_dim: usize
 }
-    
 
 impl Embedding {
     pub fn new(weight_data:Vec<f32>, num_embeddings: usize, embedding_dim: usize) -> Embedding {
@@ -78,7 +76,7 @@ impl Embedding {
 
     }
 
-    pub fn forward(self, input_ids:Vec<u32>) -> Matrix {
+    pub fn forward(self, input_ids:&Vec<u32>) -> Matrix {
         let mut output = vec![];
         for i in 0..input_ids.len() {
             output.push(self.weight.data[i]);
@@ -87,6 +85,7 @@ impl Embedding {
     }
 
 }
+
 
 struct RMSNorm {
     weight: Matrix,
@@ -119,7 +118,8 @@ impl RMSNorm {
             }
         }
     }
-    pub fn forward(&self, x:&mut Matrix) -> Matrix {
+    pub fn forward(&self, x:&Matrix) -> Matrix {
+        let x = &mut x.clone();
         self._norm(x);
         matmul(x, &self.weight)
     }
@@ -231,7 +231,6 @@ impl GemmaAttention {
         }
     }
     fn _add_to_k_cache(&self, k_cache: &mut Vec<Matrix>, xk:Matrix) {
-        // FIXME: if k_cache is none?
         // k_cache: [head_dim, seq_len] * num_kv_heads
         // xk: [1, kv_size] kv_size = num_kv_heads * head_dim
         for i in 0..self.num_kv_heads {
@@ -241,7 +240,6 @@ impl GemmaAttention {
         }
     }
     fn _add_to_v_cache(&self, v_cache: &mut Vec<Matrix>, xv:Matrix) {
-        // FIXME: if v_cache is none?
         // v_cache: [seq_len, head_dim] * num_kv_heads
         // xv: [1, kv_size] kv_size = num_kv_heads * head_dim
         for i in 0..self.num_kv_heads {
@@ -310,19 +308,6 @@ impl GemmaAttention {
 }
 
 
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_linear() {
-        let input = Matrix::new(vec![1.0;1024*3],1024, 3);
-        let l = Linear::new(vec![3.14;15], 3, 5);
-        let output = l.forward(&input);
-        assert_eq!(output.get(300, 4), 9.42);
-    }
-}
-
 struct GemmaDecoderLayer {
     input_layernorm: RMSNorm,
     self_attn: GemmaAttention,
@@ -382,8 +367,14 @@ impl GemmaDecoderLayer {
             2304 // dim = hidden_size
         );
 
-        let k_cache:Vec<Matrix> = vec![];
-        let v_cache:Vec<Matrix> = vec![];
+        let mut k_cache:Vec<Matrix> = vec![]; // [head_dim, seq_len] * num_kv_heads = [256,0]*8
+        let mut v_cache:Vec<Matrix> = vec![]; // [seq_len, head_dim] * num_kv_heads = [0,256]*8
+        for _i in 0..4 {
+            let init_k = Matrix::new_empty(256, 0);
+            k_cache.push(init_k);
+            let init_v = Matrix::new_empty(0, 256);
+            v_cache.push(init_v);
+        }
         GemmaDecoderLayer {
             input_layernorm,
             self_attn,
@@ -396,4 +387,34 @@ impl GemmaDecoderLayer {
         }
     }
 
+    pub fn forward(&mut self, new_input:&Matrix, position:usize) -> Matrix {
+        // new_input [1, hidden_size]
+        let attn_residual = new_input.clone();
+        let normed_input = self.input_layernorm.forward(&new_input);
+        let hidden_output = self.self_attn.forward(&normed_input , position, &mut self.k_cache, &mut self.v_cache);
+        let mut normed_attn_output = self.post_attention_layernorm.forward(&hidden_output);
+        normed_attn_output.add(&attn_residual);
+
+        let mlp_residual = normed_attn_output.clone();
+        let mlp_input = self.pre_feedforward_layernorm.forward(&normed_attn_output);
+        let mlp_output = self.mlp.forward(&mlp_input);
+        let mut normed_mlp_output = self.post_feedforward_layernorm.forward(&mlp_output);
+        normed_mlp_output.add(&mlp_residual);
+
+        normed_attn_output // output [1, hidden_size]
+    }
+
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_linear() {
+        let input = Matrix::new(vec![1.0;1024*3],1024, 3);
+        let l = Linear::new(vec![3.14;15], 3, 5);
+        let output = l.forward(&input);
+        assert_eq!(output.get(300, 4), 9.42);
+    }
 }
