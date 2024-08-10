@@ -1,6 +1,11 @@
 #[path = "./function.rs"]
 mod function;
 use function::*;
+#[path = "./tokenizer.rs"]
+mod tokenizer;
+use tokenizer::Tokenizer;
+use std::fs::File;
+
 
 struct Linear {
     weight_t: Matrix,
@@ -84,6 +89,12 @@ impl Embedding {
         Matrix::new(output, input_ids.len(), self.embedding_dim)
     }
 
+    pub fn from_fp(fp:&mut File) -> Embedding {
+        let num_embeddings = 256000;
+        let embedding_dim = 2304;
+        let weight_data = read_next_n_fp32(fp, num_embeddings*embedding_dim).unwrap(); // vocab_size*hidden_size
+        Embedding::new(weight_data, num_embeddings, embedding_dim)
+    }
 }
 
 
@@ -121,7 +132,9 @@ impl RMSNorm {
     pub fn forward(&self, x:&Matrix) -> Matrix {
         let x = &mut x.clone();
         self._norm(x);
-        matmul(x, &self.weight)
+        let output = matmul(x, &self.weight);
+        assert!(output.n_row == x.n_row && output.n_col == x.n_col);
+        output
     }
 }
 
@@ -402,6 +415,65 @@ impl GemmaDecoderLayer {
         normed_mlp_output.add(&mlp_residual);
 
         normed_attn_output // output [1, hidden_size]
+    }
+
+}
+
+struct GemmaModel {
+    layers: Vec<GemmaDecoderLayer>,
+    norm: RMSNorm
+}
+
+impl GemmaModel {
+    pub fn from_fp(fp: &mut File) -> GemmaModel {
+        let mut layers = vec![];
+        for _i in 0..26 { // num_hidden_layers = 26
+            let weight_data = read_next_n_fp32(fp, 77865984).unwrap();
+            let layer = GemmaDecoderLayer::new(weight_data);
+            layers.push(layer);
+        }
+        let norm_weight_data = read_next_n_fp32(fp, 2304).unwrap();
+        let norm = RMSNorm::new(norm_weight_data, 2304); // hidden_size = 2304
+        GemmaModel {
+            layers,
+            norm
+        }
+    }
+
+    pub fn forward(&mut self, input:&Matrix, position:usize) -> Matrix {
+        let mut hidden_state = input.clone();
+        for layer in self.layers.iter_mut() {
+            hidden_state = layer.forward(&hidden_state, position);
+        }
+        self.norm.forward(&hidden_state)
+    }
+
+}
+
+struct Gemma2ForCausalLM {
+    tokenizer: Tokenizer,
+    embedder: Embedding,
+    model: GemmaModel,
+    // TODO: sampler: Sampler
+}
+
+impl Gemma2ForCausalLM {
+    pub fn new(model_path:&str, tokenizer_path:&str) -> Gemma2ForCausalLM {
+        let tokenizer = Tokenizer::from_file(tokenizer_path);
+
+        let mut fp = File::open(model_path).expect(&format!("Cannot read file from {}", model_path));
+        // FIXME: read head info and skip
+        
+        let embedder = Embedding::from_fp(&mut fp);
+
+        let model = GemmaModel::from_fp(&mut fp);
+
+        Gemma2ForCausalLM {
+            tokenizer,
+            embedder,
+            model
+        }
+
     }
 
 }

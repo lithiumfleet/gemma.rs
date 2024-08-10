@@ -1,4 +1,6 @@
 use std::f32::consts::PI;
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 
 
 pub struct Matrix {
@@ -126,6 +128,22 @@ pub fn gelu(x:&mut Matrix) {
 }
 
 
+pub fn read_next_n_fp32(fp: &mut File, n: usize) -> io::Result<Vec<f32>> {
+    let mut buffer = vec![0u8; n * size_of::<f32>()];
+    let mut reader = BufReader::new(fp);
+
+    // Read n * 4 bytes from the file
+    reader.read_exact(&mut buffer)?;
+
+    // Convert the bytes to f32
+    let mut floats = Vec::with_capacity(n);
+    for chunk in buffer.chunks_exact(size_of::<f32>()) {
+        let value = f32::from_le_bytes(chunk.try_into().unwrap());
+        floats.push(value);
+    }
+
+    Ok(floats)
+}
 
 #[cfg(test)]
 mod tests {
