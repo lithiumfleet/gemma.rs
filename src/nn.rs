@@ -1,10 +1,91 @@
 #[path = "./function.rs"]
 mod function;
+use byteorder::{LittleEndian, ReadBytesExt};
 use function::*;
 #[path = "./tokenizer.rs"]
 mod tokenizer;
-use tokenizer::Tokenizer;
-use std::fs::File;
+use log::info;
+use tokenizer::{Token, Tokenizer};
+use std::{fs::File, io::Read};
+use std::cmp::max;
+use rand::prelude::*;
+use rand::distributions::WeightedIndex;
+
+struct Sampler {
+    embedding_t: Matrix,
+    final_logit_softcapping: f32
+
+}
+
+impl Sampler {
+    pub fn new(embedding:&Embedding) -> Sampler {
+        let mut embedding_t = embedding.weight.clone();
+        embedding_t.transpose();
+        Sampler {
+            embedding_t,
+            final_logit_softcapping: 30.0
+        }
+    }
+
+    fn _weighted_random_select(normed_logits: &Vec<(u32, f32)>) -> Option<usize> {
+        let mut rng = thread_rng();
+        let dist = WeightedIndex::new(normed_logits.iter().map(|token| token.1)).ok()?;
+        Some(dist.sample(&mut rng))
+    }
+
+    pub fn forward(
+        &self,
+        hidden_state: &Matrix,
+        temperature: f32,
+        top_p: f32,
+        top_k: usize
+    ) -> u32 {
+        assert!(temperature >= 0.0, "Temperature can not be negtive.");
+        let mut logits = matmul(&hidden_state, &self.embedding_t); // [1, vocab_size]
+        for i in logits.data.iter_mut() {
+            *i /= self.final_logit_softcapping;
+            *i = i.tanh();
+            *i *= self.final_logit_softcapping;
+            *i /= temperature;
+        }
+        logits.softmax();
+        let mut tokens = vec![];
+        for i in 0..logits.data.len() {
+            tokens.push((i as u32, logits.data[i]));
+        }
+        tokens.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        // apply top_p
+        let mut cumsum_p = 0.0f32;
+        let mut cnt = 0;
+        for i in tokens.iter() {
+            if cumsum_p <= top_p {
+                cumsum_p += i.1;
+                cnt += 1;
+            } else {
+                break;
+            }
+        }
+        // apply top_k
+        cnt = max(cnt, top_k);
+
+        // re-norm
+        let filtered_tokens = tokens[0..cnt].to_vec();
+        let sum_prob = filtered_tokens.iter().fold(0.0, |prob, &x| prob+x.1);
+        let normed_tokens: Vec<(u32, f32)> = filtered_tokens
+            .iter()
+            .map(|&(index, prob)| (index, prob / sum_prob))
+            .collect();
+
+        // weighted select
+        let selected_index:usize = Self::_weighted_random_select(&normed_tokens).unwrap();
+
+        let output_token_index:u32 = normed_tokens[selected_index].0;
+        output_token_index
+    }
+}
+
+
 
 
 struct Linear {
@@ -454,28 +535,42 @@ struct Gemma2ForCausalLM {
     tokenizer: Tokenizer,
     embedder: Embedding,
     model: GemmaModel,
-    // TODO: sampler: Sampler
+    sampler: Sampler
 }
 
 impl Gemma2ForCausalLM {
+    fn _read_and_skip_head(fp: &mut File) {
+        let len = fp.read_u32::<LittleEndian>().unwrap();
+        let mut str_vec = Vec::with_capacity(len as usize);
+        fp.read(&mut str_vec).unwrap();
+        let head = String::from_utf8(str_vec).unwrap();
+        assert!(&head[..4] == "GRMD", "The model file is not in gemmars format.");
+        info!("model type: {}", &head[5..]);
+    }
     pub fn new(model_path:&str, tokenizer_path:&str) -> Gemma2ForCausalLM {
         let tokenizer = Tokenizer::from_file(tokenizer_path);
 
         let mut fp = File::open(model_path).expect(&format!("Cannot read file from {}", model_path));
-        // FIXME: read head info and skip
+
+        Self::_read_and_skip_head(&mut fp);
         
         let embedder = Embedding::from_fp(&mut fp);
 
         let model = GemmaModel::from_fp(&mut fp);
 
+        let sampler = Sampler::new(&embedder);
+
         Gemma2ForCausalLM {
             tokenizer,
             embedder,
-            model
+            model,
+            sampler
         }
-
     }
 
+    // TODO: forward
+
+    // TODO: generate
 }
 
 
