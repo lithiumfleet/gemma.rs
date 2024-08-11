@@ -111,6 +111,11 @@ def main(debug_check=False):
             else:
                 logger.error(f"A file with same name {DEFAULT_OUTPUT_PATH} in the path.")
                 raise RuntimeError()
+        else:
+            os.makedirs(os.path.dirname(DEFAULT_OUTPUT_PATH), exist_ok=True)
+            with open(DEFAULT_OUTPUT_PATH, 'w') as f:
+                pass
+            print(f"Created {DEFAULT_OUTPUT_PATH}.")
 
         output_fp = open(DEFAULT_OUTPUT_PATH, "wb", buffering=0)
 
@@ -127,4 +132,4 @@ def main(debug_check=False):
 
 
 if __name__ == "__main__":
-    main(debug_check=True)
+    main(debug_check=False)

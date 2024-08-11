@@ -4,8 +4,8 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use function::*;
 #[path = "./tokenizer.rs"]
 mod tokenizer;
-use log::info;
-use tokenizer::{Token, Tokenizer};
+use log::{debug, info};
+use tokenizer::Tokenizer;
 use std::{fs::File, io::Read};
 use std::cmp::max;
 use rand::prelude::*;
@@ -165,7 +165,9 @@ impl Embedding {
     pub fn forward(&self, input_ids:&Vec<u32>) -> Matrix {
         let mut output = vec![];
         for i in 0..input_ids.len() {
-            output.push(self.weight.data[i]);
+            let id = input_ids[i] as usize;
+            let range = id*self.embedding_dim..(id+1)*self.embedding_dim;
+            output.extend(self.weight.data[range].iter());
         }
         Matrix::new(output, input_ids.len(), self.embedding_dim)
     }
@@ -187,7 +189,7 @@ struct RMSNorm {
 
 impl RMSNorm {
     pub fn new(weight_data:Vec<f32>, dim:usize) -> RMSNorm {
-        let mut weight = Matrix::new(weight_data, dim, 1);
+        let mut weight = Matrix::new(weight_data, 1, dim);
         for i in 0..weight.data.len() { weight.data[i] += 1.0; }
         RMSNorm {
             weight,
@@ -213,7 +215,7 @@ impl RMSNorm {
     pub fn forward(&self, x:&Matrix) -> Matrix {
         let x = &mut x.clone();
         self._norm(x);
-        let output = matmul(x, &self.weight);
+        let output = dotproduct(&x, &self.weight);
         assert!(output.n_row == x.n_row && output.n_col == x.n_col);
         output
     }
@@ -338,14 +340,14 @@ impl GemmaAttention {
         // xv: [1, kv_size] kv_size = num_kv_heads * head_dim
         for i in 0..self.num_kv_heads {
             let range = i*self.head_dim..(i+1)*self.head_dim;
-            let head_xv = Matrix::new(xv.data[range].to_vec(), self.head_dim, 1);
+            let mut head_xv = Matrix::new(xv.data[range].to_vec(), self.head_dim, 1);
+            head_xv.transpose();
             v_cache[i].concat(head_xv, 0);
         }
     }
-    // TODO: add prefill
 
-
-    pub fn forward(&self, 
+    pub fn forward(
+        &self, 
         new_input: &Matrix,
         position: usize,
         k_cache: &mut Vec<Matrix>,
@@ -510,6 +512,7 @@ impl GemmaModel {
     pub fn from_fp(fp: &mut File) -> GemmaModel {
         let mut layers = vec![];
         for _i in 0..26 { // num_hidden_layers = 26
+            info!("Loading layer {}.", _i);
             let weight_data = read_next_n_fp32(fp, 77865984).unwrap();
             let layer = GemmaDecoderLayer::new(weight_data);
             layers.push(layer);
@@ -532,7 +535,7 @@ impl GemmaModel {
 
 }
 
-struct Gemma2ForCausalLM {
+pub struct Gemma2ForCausalLM {
     tokenizer: Tokenizer,
     embedder: Embedding,
     model: GemmaModel,
@@ -542,7 +545,7 @@ struct Gemma2ForCausalLM {
 impl Gemma2ForCausalLM {
     fn _read_and_skip_head(fp: &mut File) {
         let len = fp.read_u32::<LittleEndian>().unwrap();
-        let mut str_vec = Vec::with_capacity(len as usize);
+        let mut str_vec:Vec<u8> = vec![0;len as usize];
         fp.read(&mut str_vec).unwrap();
         let head = String::from_utf8(str_vec).unwrap();
         assert!(&head[..4] == "GRMD", "The model file is not in gemmars format.");
@@ -555,32 +558,22 @@ impl Gemma2ForCausalLM {
 
         Self::_read_and_skip_head(&mut fp);
         
+        info!("Loading embedder.");
         let embedder = Embedding::from_fp(&mut fp);
 
+        info!("Loading model.");
         let model = GemmaModel::from_fp(&mut fp);
 
+        info!("Loading sampler.");
         let sampler = Sampler::new(&embedder);
 
+        info!("Finish Loading.");
         Gemma2ForCausalLM {
             tokenizer,
             embedder,
             model,
             sampler
         }
-    }
-
-    pub fn forward(&mut self,
-            input:u32,
-            position:usize,
-            temperature:f32,
-            top_p:f32,
-            top_k:usize
-        ) -> u32 {
-        let input_ids = vec![input];
-        let emb_ids = self.embedder.forward(&input_ids);
-        let hidden_state = self.model.forward(&emb_ids, position);
-        let next_token_id = self.sampler.forward(&hidden_state, temperature, top_p, top_k);
-        next_token_id
     }
 
     pub fn generate(
@@ -591,21 +584,25 @@ impl Gemma2ForCausalLM {
         top_p:f32,
         top_k:usize
     ) -> String {
-        let mut input_ids:Vec<u32> = self.tokenizer.encode(prompt);
-        let mut next_ids:u32 = input_ids.pop().unwrap();
-        let embeded_input = self.embedder.forward(&input_ids);
+        let input_ids:Vec<u32> = self.tokenizer.encode(prompt);
+        let mut next_ids:u32 = input_ids[0];
 
-        // self.model.prefill(&emb_ids[..-1]);
         let mut output:Vec<u32> = vec![];
-        for position in prompt.len()-1..max_seqlen {
-
+        for position in 0..max_seqlen {
+            let embeded_input = self.embedder.forward(&vec![next_ids]);
             let hidden_state:Matrix = self.model.forward(&embeded_input, position);
 
-            next_ids = self.sampler.forward(&hidden_state, temperature, top_p, top_k);
-
-            output.push(next_ids);
-
-            if next_ids == self.tokenizer.eos_id { break; }
+            if position >= input_ids.len() {
+                next_ids = self.sampler.forward(&hidden_state, temperature, top_p, top_k);
+                output.push(next_ids);
+            } else {
+                // sorry for my pool prefilling... I don't want write another naive MHA.
+                next_ids = input_ids[position];
+            }
+            
+            if next_ids == self.tokenizer.eos_id && position >= input_ids.len() { 
+                break; 
+            }
         }
 
         self.tokenizer.decode(&output)

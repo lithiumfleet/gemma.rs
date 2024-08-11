@@ -14,6 +14,9 @@ class Tokenizer:
         self.vocab_size = self.sp_model.vocab_size()
 
     def convert(self, output_path):
+        # add director
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
         print(f"Reading from {self.tokenizer_path}")
         tokens, scores = list(), list()
         for i in range(self.vocab_size):
@@ -45,7 +48,6 @@ class Tokenizer:
 if __name__ == "__main__":
     print("This is tokenizer convertor script.")
     tokenizer = Tokenizer(DEFAULT_TOKENIZER_PATH)
-    # corpus = "Another benefit is that if let allows us to match non-parameterized enum variants. This is true even in cases where the enum doesn't implement or derive PartialEq. In such cases if Foo::Bar == a would fail to compile, because instances of the enum cannot be equated, however if let will continue to work."
     corpus = "hello world!"
     input_ids = tokenizer.sp_model.EncodeAsIds(corpus)
     recover = "|".join([tokenizer.sp_model.DecodeIds(input_id) for input_id in input_ids])

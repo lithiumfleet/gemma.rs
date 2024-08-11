@@ -2,20 +2,23 @@ use env_logger;
 use log::LevelFilter;
 mod tokenizer;
 mod nn;
-use tokenizer::Tokenizer;
+use nn::Gemma2ForCausalLM;
 
 
 fn main() {
     env_logger::builder()
-        .filter_level(LevelFilter::Debug)
+        .filter_level(LevelFilter::Info)
         .init();
-    let mut tokenizer = Tokenizer::from_file("./model/converted/tokenizer.bin");
-    // let tokens = vec![106, 1645, 108, 107, 108, 106, 2516, 108];
-    // println!("{}", tokenizer.decode(&tokens));
+    let model_path = "./model/converted/model.bin";
+    let tokenizer_path = "./model/converted/tokenizer.bin";
+    let mut gemma2 = Gemma2ForCausalLM::new(model_path, tokenizer_path);
 
-    // let my_string = "Another benefit is that if let allows us to match non-parameterized enum variants. This is true even in cases where the enum doesn't implement or derive PartialEq. In such cases if Foo::Bar == a would fail to compile, because instances of the enum cannot be equated, however if let will continue to work.";
-    let my_string = "hello world!";
-    let tokens = tokenizer.encode(&my_string);
-    let recover = tokenizer.decode(&tokens);
-    println!("{} -> {:?} -> {:?}", my_string, tokens, recover);
+    let prompt = "hello here is Jane.";
+    let max_seqlen = 512;
+    let temperature = 0.5;
+    let top_p = 0.9;
+    let top_k = 10;
+    let output = gemma2.generate(prompt, max_seqlen, temperature, top_p, top_k);
+
+    println!("{}\n{}", prompt, output);
 }

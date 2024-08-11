@@ -98,6 +98,15 @@ impl Matrix {
     }
 }
 
+pub fn dotproduct(a:&Matrix, b:&Matrix) -> Matrix {
+    assert!(a.n_row == b.n_row && a.n_col == b.n_col);
+    let mut output = vec![];
+    for i in 0..a.data.len() {
+        output.push(a.data[i]*b.data[i]);
+    }
+    Matrix::new(output, a.n_row, a.n_col)
+}
+
 pub fn matmul(a:&Matrix, b:&Matrix) -> Matrix {
     assert!(a.n_col == b.n_row, 
         "Can not matmul {}*{} with {}*{}", a.n_row, a.n_col, b.n_row, b.n_col);
@@ -136,7 +145,7 @@ pub fn read_next_n_fp32(fp: &mut File, n: usize) -> io::Result<Vec<f32>> {
     reader.read_exact(&mut buffer)?;
 
     // Convert the bytes to f32
-    let mut floats = Vec::with_capacity(n);
+    let mut floats:Vec<f32> = vec![];
     for chunk in buffer.chunks_exact(size_of::<f32>()) {
         let value = f32::from_le_bytes(chunk.try_into().unwrap());
         floats.push(value);

@@ -1,6 +1,6 @@
 use std::fs;
 use std::str;
-use log::{debug, info, warn, error};
+use log::{debug, info};
 
 
 trait FromBytes {
