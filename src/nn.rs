@@ -162,7 +162,7 @@ impl Embedding {
 
     }
 
-    pub fn forward(self, input_ids:&Vec<u32>) -> Matrix {
+    pub fn forward(&self, input_ids:&Vec<u32>) -> Matrix {
         let mut output = vec![];
         for i in 0..input_ids.len() {
             output.push(self.weight.data[i]);
@@ -342,6 +342,7 @@ impl GemmaAttention {
             v_cache[i].concat(head_xv, 0);
         }
     }
+    // TODO: add prefill
 
 
     pub fn forward(&self, 
@@ -568,9 +569,28 @@ impl Gemma2ForCausalLM {
         }
     }
 
-    // TODO: forward
+    pub fn forward(&mut self,
+            input:u32,
+            position:usize,
+            temperature:f32,
+            top_p:f32,
+            top_k:usize
+        ) -> u32 {
+        let input_ids = vec![input];
+        let emb_ids = self.embedder.forward(&input_ids);
+        let hidden_state = self.model.forward(&emb_ids, position);
+        let next_token_id = self.sampler.forward(&hidden_state, temperature, top_p, top_k);
+        next_token_id
+    }
 
     // TODO: generate
+    // pub fn generate(prompt:&str,
+    //     max_seqlen:usize,
+    //     temperature:f32,
+    //     top_p:f32,
+    //     top_k:usize
+    // ) -> String {
+    // }
 }
 
 
