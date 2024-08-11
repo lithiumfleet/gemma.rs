@@ -583,14 +583,33 @@ impl Gemma2ForCausalLM {
         next_token_id
     }
 
-    // TODO: generate
-    // pub fn generate(prompt:&str,
-    //     max_seqlen:usize,
-    //     temperature:f32,
-    //     top_p:f32,
-    //     top_k:usize
-    // ) -> String {
-    // }
+    pub fn generate(
+        &mut self,
+        prompt:&str,
+        max_seqlen:usize,
+        temperature:f32,
+        top_p:f32,
+        top_k:usize
+    ) -> String {
+        let mut input_ids:Vec<u32> = self.tokenizer.encode(prompt);
+        let mut next_ids:u32 = input_ids.pop().unwrap();
+        let embeded_input = self.embedder.forward(&input_ids);
+
+        // self.model.prefill(&emb_ids[..-1]);
+        let mut output:Vec<u32> = vec![];
+        for position in prompt.len()-1..max_seqlen {
+
+            let hidden_state:Matrix = self.model.forward(&embeded_input, position);
+
+            next_ids = self.sampler.forward(&hidden_state, temperature, top_p, top_k);
+
+            output.push(next_ids);
+
+            if next_ids == self.tokenizer.eos_id { break; }
+        }
+
+        self.tokenizer.decode(&output)
+    }
 }
 
 
