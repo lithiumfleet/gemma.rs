@@ -137,7 +137,7 @@ impl GemmaMLP {
         let mut gate = self.gate_proj.forward(x);
         gelu(&mut gate); // F.gelu(gate, approximate="tanh")
         let up = self.up_proj.forward(x);
-        let fuse = matmul(&gate, &up);
+        let fuse = dotproduct(&gate, &up);
         let outputs = self.down_proj.forward(&fuse);
         outputs
     }
@@ -292,7 +292,7 @@ impl GemmaAttention {
     fn _chunked_xq_by_heads(xq:Matrix, head_dim:usize) -> Vec<Matrix> {
         assert!(xq.n_row == 1 && xq.n_col % head_dim == 0);
         let mut chunked_q:Vec<Matrix> = vec![];
-        for i in 0..xq.data.len() {
+        for i in 0..xq.n_col/head_dim {
             chunked_q.push(
                 Matrix::new(xq.data[i*head_dim..(i+1)*head_dim].to_vec(), 1, head_dim)
             );
@@ -536,7 +536,7 @@ impl GemmaModel {
 }
 
 pub struct Gemma2ForCausalLM {
-    tokenizer: Tokenizer,
+    pub tokenizer: Tokenizer,
     embedder: Embedding,
     model: GemmaModel,
     sampler: Sampler
@@ -579,7 +579,7 @@ impl Gemma2ForCausalLM {
     pub fn generate(
         &mut self,
         prompt:&str,
-        max_seqlen:usize,
+        max_genlen:usize,
         temperature:f32,
         top_p:f32,
         top_k:usize
@@ -587,6 +587,7 @@ impl Gemma2ForCausalLM {
         let input_ids:Vec<u32> = self.tokenizer.encode(prompt);
         let mut next_ids:u32 = input_ids[0];
 
+        let max_seqlen = max_genlen+input_ids.len();
         let mut output:Vec<u32> = vec![];
         for position in 0..max_seqlen {
             let embeded_input = self.embedder.forward(&vec![next_ids]);
@@ -601,6 +602,7 @@ impl Gemma2ForCausalLM {
             }
             
             if next_ids == self.tokenizer.eos_id && position >= input_ids.len() { 
+                output.pop();
                 break; 
             }
         }

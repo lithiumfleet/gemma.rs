@@ -191,5 +191,17 @@ impl Tokenizer {
         
         token_vec.iter().map(|t| t.index).collect()
     }
-    
+}
+
+pub fn apply_templete(messages:&Vec<&str>) -> String {
+    assert!(messages.len() % 2 == 1);
+    let mut chat = String::new();
+    for i in 0..messages.len() {
+        if i % 2 == 0 {
+            chat += &format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model", messages[i]);
+        } else {
+            chat += &format!("{}<end_of_turn>\n", messages[i]);
+        }
+    }
+    chat
 }
